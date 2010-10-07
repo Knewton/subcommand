@@ -10,28 +10,32 @@ import optparse
 import re
 import sys
 import itertools
+import logging
 
 prog = None
-global_options = {}
 subcommand_lookup = {}
 subcommands = []
 
 class Program:
-	def __init__(self, name, help, options, doc):
+	def __init__(self, name, output, help, options, doc, configs):
 		"""Creates a program instance.
 		name - name of the program, if not specified uses sys.argv[0]
+		output - output logger for the program
 		help - help for the program, if not specified taken from docstring of __main__ module
 		options - global options for the program, if not specified taken from docstring of __main__ module
+		doc - documentation for the program, if not specified taken from docstring of __main__ module
+		configs - program level configurations to be passed to all subcommands
 		"""
 		main_module = __import__("__main__")
 		self.name = name or ("python " + sys.argv[0])
+		self.output = output
 		_help, _options = parse_docstring(doc or main_module.__doc__)
 		self.help = help or _help
 		self.options = options or _options
+		self.configs = configs
 
 	def __call__(self, args):
-		global global_options
-		global_options, args = parse_options(self.options, args)
+		args = parse_options([], args)[1]
 		if args:
 			cmd, args = args[0], args[1:]
 		else:
@@ -40,8 +44,7 @@ class Program:
 		if cmd in subcommand_lookup:
 			subcommand_lookup[cmd](args)
 		else:
-			print >> sys.stderr, "Unknown command:", cmd
-			print >> sys.stderr, "Type '%s help' for usage." % prog.name
+			self.output.error("Unknown command: %s\n\nType '%s help' for usage." % (cmd, prog.name))
 
 class SubCommand:
 	def __init__(self, func, name, aliases, help, options):
@@ -54,8 +57,11 @@ class SubCommand:
 		self.options = options or _options
 
 	def __call__(self, args):
-		options, args = parse_options(self.options, args)
-		return self.func(options, *args)
+		all_options = self.options[:]
+		all_options.extend(prog.options)
+	
+		options, args = parse_options(all_options, args)
+		return self.func(prog.output, options, prog.configs, *args)
 
 	def __str__(self):
 		return self._title()
@@ -78,16 +84,15 @@ class SubCommand:
 		long_desc = self._long_desc()
 		if long_desc:
 			print long_desc
-
 		if self.options:
 			print "\nValid Options:"
 			for option in self.options:
 				print "  ", str(option)
-
 		if prog.options:
 			print "\nGlobal Options:"
 			for option in prog.options:
 				print "  ", str(option)
+		print
 
 def subcommand(name=None, aliases=[], help=None, options=None):
 	def decorator(f):
@@ -201,14 +206,46 @@ def parse_options(options, args):
 		parser.error(str(err))
 
 	return (parser.values, parser.rargs)
+	
+class LevelRangeFilter(logging.Filter):
+	def __init__(self, low, high):
+		self.low = low
+		self.high = high
+		
+	def filter(self, record):
+		return record.levelno >= self.low and record.levelno <= self.high
+		
+def make_handler(outstream, format, low, high):
+	handler = logging.StreamHandler(outstream)
+	formatter = logging.Formatter(format)
+	handler.setFormatter(formatter)
+	handler.addFilter(LevelRangeFilter(low, high))
+	return handler
 
-def main(name=None, help=None, options=None, doc=None):
+def generate_output_logger(name, formatting=None):
+	format = formatting or "%(name)s: %(levelname)s - %(message)s"
+	
+	logger = logging.getLogger(name)
+	logger.setLevel(logging.INFO)
+
+	logger.addHandler(make_handler(sys.stderr, format, logging.WARN, logging.CRITICAL))
+	logger.addHandler(make_handler(sys.stdout, format, logging.DEBUG, logging.INFO))
+		
+	return logger
+
+def main(name=None, help=None, options=None, doc=None, configs=None, outputlogger=None):
+	
+	if outputlogger != None:
+		logger = outputlogger
+	else:
+		logger = generate_output_logger(name)
+
 	global prog
-	prog = Program(name, help, options, doc)
+	prog = Program(name, logger, help, options, doc, configs)
 	return prog(sys.argv[1:])
 
 @subcommand()
-def help(options, *cmds):
+def help(output, options, configs, *cmds):
 	"""Describe usage of this program and its subcommands.
 	"""
 	if cmds:
@@ -216,9 +253,9 @@ def help(options, *cmds):
 			if cmd in subcommand_lookup:
 				subcommand_lookup[cmd].showhelp()
 			else:
-				print >> sys.stderr, "error: %s is not a valid subcommand. Type '%s help' for subcommands." % (cmd, prog.name)
+				self.output.error("%s is not a valid subcommand.\n\nType '%s help' for usage." % (cmd, prog.name))
 	else:
-		print "usage: %s [global_options] <subcommand> [options] [args]" % prog.name
+		print "usage: %s <subcommand> [options] [args]" % prog.name
 		print prog.help
 		print "Available subcommands:" 
 		for cmd in sorted(subcommands, key=lambda cmd: cmd.name):
@@ -227,6 +264,7 @@ def help(options, *cmds):
 			print "\nGlobal Options:"
 			for option in prog.options:
 				print "  ", str(option)
+		print
 		
 if __name__ == "__main__":
 	import doctest
