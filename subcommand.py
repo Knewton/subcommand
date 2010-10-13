@@ -151,7 +151,7 @@ def parse_docstring(docstring):
 		options = [parse_option(line) for line in lines[index+1:] if line]
 		return help, options
 	else:
-		return docstring, []
+		return "\n".join(lines), []
 
 def parse_option(line):
 	"""Parse one option from docstring.
@@ -253,7 +253,7 @@ def help(output, options, configs, *cmds):
 			if cmd in subcommand_lookup:
 				subcommand_lookup[cmd].showhelp()
 			else:
-				self.output.error("%s is not a valid subcommand.\n\nType '%s help' for usage." % (cmd, prog.name))
+				output.error("%s is not a valid subcommand.\n\nType '%s help' for usage." % (cmd, prog.name))
 	else:
 		print "usage: %s <subcommand> [options] [args]" % prog.name
 		print prog.help
