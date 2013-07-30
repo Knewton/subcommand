@@ -15,6 +15,7 @@ import logging
 prog = None
 subcommand_lookup = {}
 subcommands = []
+OPTIONS = None
 
 class Program:
 	def __init__(self, name, output, help, options, doc, configs):
@@ -61,6 +62,10 @@ class SubCommand:
 		all_options.extend(prog.options)
 	
 		options, args = parse_options(all_options, args)
+
+		global OPTIONS
+		OPTIONS = vars(options)
+
 		return self.func(prog.output, options, prog.configs, *args)
 
 	def __str__(self):
